@@ -211,7 +211,7 @@ void loop() {
             ledcWrite(canalPWMAmarillo, 0);   // Apagar LED amarillo
             ledcWrite(canalPWMRojo, 0);       // Apagar LED rojo
             myServo.write(0); // Posición por defecto si no hay LEDs encendidos
-        } else if (temperatura >= 37 && temperatura < 50) {
+        } else if (temperatura >= 37 && temperatura <37.5) {
             Serial.println("Encendiendo LED Amarillo");
             ledcWrite(canalPWMVerde, 0);      // Apagar LED verde
             ledcWrite(canalPWMAmarillo, 255); // Encender LED amarillo
