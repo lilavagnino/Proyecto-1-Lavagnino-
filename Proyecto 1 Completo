@@ -210,7 +210,7 @@ void setup() {
   }
 }
 
-
+//Loop para que los leds se enciendan siempre y cuando se haga la interrupción con el botón
 void loop() {
 io.run();
     int valorTemperatura = analogRead(Ttemperatura);
