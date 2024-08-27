@@ -1,41 +1,45 @@
-#include <Arduino.h>
-#include "driver/ledc.h"
+#include <Arduino.h> // Librería base para Arduino
+#include "driver/ledc.h" // Librería para controlar PWM en ESP32
+#include "config.h" // Configuración específica para Adafruit IO
 
-// Defino una estructura para manejar el botón
+// Defino un feed para el termómetro en Adafruit IO
+AdafruitIO_Feed *termometro = io.feed("Proyecto_L");
+
+// Estructura para manejar el botón de forma sencilla
 struct Boton {
-    const uint8_t pin;       // Pin del botón
-    bool pressed;            // Estado si está presionado o no
-    bool lastState;          // Último estado del botón para detectar cambios
-    unsigned long lastDebounceTime; // Tiempo del último cambio detectado (para antirrebote)
-    unsigned long debounceDelay;    // Tiempo de retardo para evitar ruido
+    const uint8_t pin;  // Pin al que está conectado el botón
+    bool pressed;       // Estado del botón (si fue presionado)
+    bool lastState;     // Estado previo del botón
+    unsigned long lastDebounceTime; // Tiempo de la última acción del botón
+    unsigned long debounceDelay;    // Tiempo de retardo para evitar rebote
 };
 
-// Instancio el botón con sus configuraciones
-Boton Sub = {5, false, false, 0, 5};
+// Instancio un botón en el pin 35
+Boton Sub = {35, false, false, 0, 3};
 
-// Defino un semáforo para manejar interrupciones sin problemas
+// Defino un semáforo para las interrupciones, para asegurar que no se interrumpa el código
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
-// Función de interrupción para el botón
+// Función de interrupción para manejar el botón
 void IRAM_ATTR handle_Sub() {
-    portENTER_CRITICAL_ISR(&mux);  // Inicio de sección crítica
+    portENTER_CRITICAL_ISR(&mux); // Inicio sección crítica
     unsigned long currentTime = millis();
-    // Chequeo para el antirrebote del botón
+    // Si el tiempo desde la última acción es mayor que el retardo, marco el botón como presionado
     if ((currentTime - Sub.lastDebounceTime) > Sub.debounceDelay) {
-        Sub.pressed = true;                // Si pasa el tiempo de debounce, marco el botón como presionado
-        Sub.lastDebounceTime = currentTime; // Actualizo el tiempo de debounce
+        Sub.pressed = true;
+        Sub.lastDebounceTime = currentTime;
     }
-    portEXIT_CRITICAL_ISR(&mux);   // Fin de sección crítica
+    portEXIT_CRITICAL_ISR(&mux); // Fin de sección crítica
 }
 
-#define Ttemperatura 34  // Pin para leer la temperatura
+#define Ttemperatura 34 // Pin donde se conecta el sensor de temperatura
 
-// Pines para los LEDs que representan los colores del semáforo
+// Defino los pines para los LEDs RGB
 #define LedVerde 5
 #define LedAmarillo 18
 #define LedRojo 19
 
-// Configuración de PWM para manejar el brillo de los LEDs
+// Configuración de PWM para los LEDs
 #define freqPWM 5000
 #define resolutionPWM 8
 #define canalPWMVerde 0
@@ -44,10 +48,10 @@ void IRAM_ATTR handle_Sub() {
 
 // Configuración de PWM para el servo motor
 #define canalPWMservo 3
-#define freqPWMservo 50      // 50 Hz, típico para servos
-#define resPWMservo 16       // Resolución alta para control fino del servo
+#define freqPWMservo 50 // Frecuencia estándar para servos
+#define resPWMservo 16  // Resolución alta para mayor precisión en el movimiento del servo
 
-// Defino los pines de cada segmento del display de 7 segmentos
+// Pines para controlar los segmentos del display de 7 segmentos
 #define PuntoPin 33
 #define A 14
 #define B 13
@@ -57,15 +61,15 @@ void IRAM_ATTR handle_Sub() {
 #define F 12  
 #define G 27
 
-// Pines para seleccionar cuál display se va a encender (multiplexeo)
+// Pines para seleccionar cuál display de 7 segmentos está activo
 #define Display1 23
 #define Display2 22
 #define Display3 21
 
-// Pin para el control del servo motor
+// Pin para controlar el servo motor
 #define ServoPin 2
 
-// Mapeo de qué segmentos encender para cada número del 0 al 9
+// Mapa de segmentos para mostrar los dígitos 0-9 en los displays
 byte segmentos[] = {
     0b00111111, // 0
     0b00000110, // 1
@@ -79,14 +83,14 @@ byte segmentos[] = {
     0b01101111  // 9
 };
 
-// Variables para manejar la visualización de la temperatura
+// Variables para manejar la temperatura y el tiempo de actualización del display
 int valorTemperaturaAnterior = -1;
 unsigned long tiempoAnteriorDisplay = 0;
-const unsigned long intervaloDisplay = 5; // Cada cuánto refresco el display
+const unsigned long intervaloDisplay = 5; // Intervalo para refrescar los displays
 
 // Función para mostrar un dígito en el display de 7 segmentos
 void mostrarDigito(byte valor, bool punto) {
-    // Encender o apagar cada segmento según el valor del número
+    // Escribir en cada segmento si debe estar encendido o apagado
     digitalWrite(A, valor & 0b00000001);
     digitalWrite(B, valor & 0b00000010);
     digitalWrite(C, valor & 0b00000100);
@@ -94,45 +98,42 @@ void mostrarDigito(byte valor, bool punto) {
     digitalWrite(E, valor & 0b00010000);
     digitalWrite(F, valor & 0b00100000);
     digitalWrite(G, valor & 0b01000000);
-    digitalWrite(PuntoPin, punto ? HIGH : LOW);  // Punto decimal
+    digitalWrite(PuntoPin, punto ? HIGH : LOW); // Controlar el punto decimal
 }
 
-// Función para mostrar un número en los tres displays
+// Función para mostrar un número flotante en los tres displays de 7 segmentos
 void mostrarNumero(float numero) {
-    // Multiplico por 10 para trabajar con decimales como si fueran enteros
+    // Convierto el número a entero multiplicando por 10 para manejar un decimal
     int numeroEntero = (int)(numero * 10);
-    int centenas = (numeroEntero / 100) % 10;
-    int decenas = (numeroEntero / 10) % 10;
-    int unidades = numeroEntero % 10;
-    bool puntoDecimal = true; // Decido si mostrar el punto decimal
+    int centenas = (numeroEntero / 100) % 10; // Extraigo la centena
+    int decenas = (numeroEntero / 10) % 10;   // Extraigo la decena
+    int unidades = numeroEntero % 10;         // Extraigo la unidad
+    bool puntoDecimal = true; // Mostrar punto decimal en el dígito de las decenas
 
-    unsigned long tiempoActual = millis();
-
-    if (tiempoActual - tiempoAnteriorDisplay >= intervaloDisplay) {
+    // Multiplexeo para mostrar cada dígito en su respectivo display
+    for (int i = 0; i < 10; i++) { // Ciclos para reducir parpadeo
         // Mostrar centena
         digitalWrite(Display1, HIGH);
         mostrarDigito(segmentos[centenas], false);
-        delayMicroseconds(500); // Reducir parpadeo
+        delay(1); // Pequeño retraso
         digitalWrite(Display1, LOW);
 
         // Mostrar decena
         digitalWrite(Display2, HIGH);
         mostrarDigito(segmentos[decenas], puntoDecimal);
-        delayMicroseconds(500); // Reducir parpadeo
+        delay(1); // Pequeño retraso
         digitalWrite(Display2, LOW);
 
         // Mostrar unidad
         digitalWrite(Display3, HIGH);
         mostrarDigito(segmentos[unidades], false);
-        delayMicroseconds(500); // Reducir parpadeo
+        delay(1); // Pequeño retraso
         digitalWrite(Display3, LOW);
-
-        tiempoAnteriorDisplay = tiempoActual;
     }
 }
 
 void setup() {
-    // Configuro los pines de los segmentos del display como salidas
+    // Configuración de pines de los displays de 7 segmentos
     pinMode(A, OUTPUT);
     pinMode(B, OUTPUT);
     pinMode(C, OUTPUT);
@@ -142,17 +143,13 @@ void setup() {
     pinMode(G, OUTPUT);
     pinMode(PuntoPin, OUTPUT);
 
-    // Configuro los pines para seleccionar cuál display se enciende
     pinMode(Display1, OUTPUT);
     pinMode(Display2, OUTPUT);
     pinMode(Display3, OUTPUT);
 
-    // Pin para leer la temperatura
-    pinMode(Ttemperatura, INPUT);
+    pinMode(Ttemperatura, INPUT); // Pin para leer la temperatura
 
-    Serial.begin(115200);  // Inicio la comunicación serial para depuración
-
-    // Configuración del PWM para los LEDs RGB
+    // Configuración de los canales PWM para cada LED
     ledcSetup(canalPWMVerde, freqPWM, resolutionPWM);
     ledcAttachPin(LedVerde, canalPWMVerde);
 
@@ -162,53 +159,73 @@ void setup() {
     ledcSetup(canalPWMRojo, freqPWM, resolutionPWM);
     ledcAttachPin(LedRojo, canalPWMRojo);
 
-    // Configuración del botón con resistencia interna de pull-up y la interrupción
+    // Configuración del botón y la interrupción para detectar pulsaciones
     pinMode(Sub.pin, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(Sub.pin), handle_Sub, FALLING);
 
-    // Configuración del PWM para el servo motor
+    // Configuración del servo motor
     ledcSetup(canalPWMservo, freqPWMservo, resPWMservo);
     ledcAttachPin(ServoPin, canalPWMservo);
+    ledcWrite(canalPWMservo, 3277); // Posición inicial del servo
 
-    // Pongo el servo en su posición inicial
-    ledcWrite(canalPWMservo, 3277);
+    // Iniciar comunicación serial para debug
+    Serial.begin(115200);
+    while(!Serial); // Esperar a que se inicie la comunicación serial
+    Serial.print("Connecting to Adafruit IO");
+    
+    // Conectarse a Adafruit IO
+    io.connect();
+    while(io.status() < AIO_CONNECTED) {
+        Serial.print(".");
+        delay(500);
+    }
+    // Imprimir estado de conexión
+    Serial.println();
+    Serial.println(io.statusText());
 }
 
 void loop() {
-    // Leo el valor de la temperatura usando el ADC
+    // Leer el valor analógico del sensor de temperatura
     int valorTemperatura = analogRead(Ttemperatura);
-    float voltaje = valorTemperatura * (3.3 / 4095.0); // Calculo el voltaje
-    float temperatura = voltaje * 100;                 // Calculo la temperatura en grados
+    // Convertir el valor a voltaje y luego a temperatura
+    float voltaje = valorTemperatura * (3.3 / 4095.0);
+    float temperatura = voltaje * 100;
 
-    mostrarNumero(temperatura);  // Muestro la temperatura en los displays
-
-    // Si el botón ha sido presionado, actualizo LEDs y servo según la temperatura
+    // Mostrar la temperatura en los displays de 7 segmentos
+    mostrarNumero(temperatura);  
+       
+    // Si el botón fue presionado
     if (Sub.pressed) {
+        io.run(); // Ejecutar Adafruit IO para enviar datos
         Serial.print("Temperatura: ");
         Serial.println(temperatura);
+        
+        // Control de LEDs y servo basado en la temperatura
         if (temperatura < 15.0) {
             Serial.println("Encendiendo LED Verde");
-            ledcWrite(canalPWMVerde, 255);
-            ledcWrite(canalPWMAmarillo, 0);
-            ledcWrite(canalPWMRojo, 0);
-            ledcWrite(canalPWMservo, 1638); // Ajuste según la posición deseada
+            ledcWrite(canalPWMVerde, 255); // LED verde encendido
+            ledcWrite(canalPWMAmarillo, 0); // LED amarillo apagado
+            ledcWrite(canalPWMRojo, 0); // LED rojo apagado
+            ledcWrite(canalPWMservo, 1638); // Posición del servo para baja temperatura
         } else if (temperatura >= 15.0 && temperatura < 20.0) {
             Serial.println("Encendiendo LED Amarillo");
-            ledcWrite(canalPWMVerde, 0);
-            ledcWrite(canalPWMAmarillo, 255);
-            ledcWrite(canalPWMRojo, 0);
-            ledcWrite(canalPWMservo, 3277); // Ajuste según la posición deseada
+            ledcWrite(canalPWMVerde, 0); // LED verde apagado
+            ledcWrite(canalPWMAmarillo, 255); // LED amarillo encendido
+            ledcWrite(canalPWMRojo, 0); // LED rojo apagado
+            ledcWrite(canalPWMservo, 3277); // Posición del servo para temperatura media
         } else {
             Serial.println("Encendiendo LED Rojo");
-            ledcWrite(canalPWMVerde, 0);
-            ledcWrite(canalPWMAmarillo, 0);
-            ledcWrite(canalPWMRojo, 255);
-            ledcWrite(canalPWMservo, 4915); // Ajuste según la posición deseada
+            ledcWrite(canalPWMVerde, 0); // LED verde apagado
+            ledcWrite(canalPWMAmarillo, 0); // LED amarillo apagado
+            ledcWrite(canalPWMRojo, 255); // LED rojo encendido
+            ledcWrite(canalPWMservo, 4915); // Posición del servo para alta temperatura
         }
-
-        Sub.pressed = false; // Reinicio el estado del botón
+        
+        // Enviar temperatura a Adafruit IO
+        termometro->save(temperatura);
+        Sub.pressed = false; // Restablecer estado del botón
     }
-
-    delay(1); // Un pequeño delay para no saturar la CPU
+    
+    // Pequeño retraso para evitar sobrecargar el microcontrolador
+    delay(10);
 }
-
