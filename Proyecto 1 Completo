@@ -1,3 +1,7 @@
+//Lucía Lavagnino 22185
+//Ingeniería biomédica 
+//Proyecto 1 Electrónica digital 2
+
 #include <Arduino.h> // Librería base para Arduino
 #include "driver/ledc.h" // Librería para controlar PWM en ESP32
 #include "config.h" // Configuración específica para Adafruit IO
